@@ -2,24 +2,26 @@
 
 Vision 平台统一日志 SDK（Go）。各业务服务通过本包输出 **NDJSON** 到本地 `runtime/logs`，由 Filebeat 旁路采集写入 Elasticsearch；**本 SDK 不内置 ES 客户端、不发起观测上报**。
 
+业务代码导入子包 `logging` 即可，调用方式与常见 `logging.Info(...)` 一致。
+
 ## 快速接入
 
 ```go
-import visionlogger "github.com/yongyuanfan/vision-logger"
+import "github.com/yongyuanfan/vision-logger/logging"
 
 func main() {
-    if err := visionlogger.Init(visionlogger.Config{
+    if err := logging.Init(logging.Config{
         Enabled:  true,
         Level:    "info", // debug | info | warn | error
         FilePath: "runtime/logs/vision-ai.log",
     }); err != nil {
         panic(err)
     }
-    defer visionlogger.Close()
+    defer logging.Close()
 
-    visionlogger.Info("server starting",
-        visionlogger.FieldComponent, "runtime",
-        visionlogger.FieldService, "http",
+    logging.Info("server starting",
+        logging.FieldComponent, "runtime",
+        logging.FieldService, "http",
     )
 }
 ```
@@ -80,15 +82,15 @@ replace github.com/yongyuanfan/vision-logger => ../vision-logger
 ## Context 辅助
 
 ```go
-ctx := visionlogger.ContextWithTraceID(ctx, traceID)
-ctx = visionlogger.ContextWithUserID(ctx, userID)
-visionlogger.FromContext(ctx).Info("request handled", visionlogger.FieldComponent, "http")
+ctx := logging.ContextWithTraceID(ctx, traceID)
+ctx = logging.ContextWithUserID(ctx, userID)
+logging.FromContext(ctx).Info("request handled", logging.FieldComponent, "http")
 ```
 
 空值不会写入 JSON。也可用 `With` 固定默认字段：
 
 ```go
-log := visionlogger.With(visionlogger.FieldComponent, "runtime")
+log := logging.With(logging.FieldComponent, "runtime")
 log.Info("starting")
 ```
 

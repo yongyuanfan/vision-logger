@@ -1,4 +1,4 @@
-package visionlogger
+package logging
 
 // 核心字段名（与 slog JSONHandler / Filebeat ndjson 契约对齐，业务不得改名）。
 const (

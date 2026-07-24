@@ -1,4 +1,4 @@
-package visionlogger
+package logging
 
 import (
 	"fmt"

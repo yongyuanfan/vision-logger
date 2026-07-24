@@ -1,4 +1,4 @@
-package visionlogger
+package logging
 
 // Config 控制文件日志的启用、级别与落盘基路径。
 type Config struct {
