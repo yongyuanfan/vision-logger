@@ -16,13 +16,15 @@ const (
 )
 
 var (
-	mu         sync.Mutex
-	enabled    bool
-	logger     *slog.Logger
-	logFile    *os.File
-	minLevel   slog.Level
-	basePath   string
-	currentDay string
+	mu           sync.Mutex
+	enabled      bool
+	outputDriver string
+	logger       *slog.Logger
+	logFile      *os.File
+	clsClient    clsCloser
+	minLevel     slog.Level
+	basePath     string
+	currentDay   string
 	// nowFunc 便于测试按天滚动；生产环境使用 time.Now。
 	nowFunc = time.Now
 )
@@ -32,28 +34,42 @@ type Logger struct {
 	attrs []any
 }
 
-// Init 根据配置初始化 JSON 文件日志；未启用时直接返回。
-// 日志按天切分，实际文件名为在基路径扩展名前插入日期，例如 app-2026-07-09.log。
+// Init 按驱动初始化日志。未启用时直接返回。
+// file 按天切分，实际文件名为在基路径扩展名前插入日期，例如 app-2026-07-09.log。
+// cls 使用腾讯云 CLS 异步上报，不写本地文件。
 func Init(cfg Config) error {
 	mu.Lock()
 	defer mu.Unlock()
 
-	resetLocked()
+	_ = resetLocked()
 
 	if !cfg.Enabled {
 		return nil
 	}
 
-	filePath := strings.TrimSpace(cfg.FilePath)
-	if filePath == "" {
-		filePath = defaultFilePath
-	}
-	basePath = filePath
-	minLevel = parseLevel(cfg.Level)
-
-	if err := openDailyFileLocked(nowFunc()); err != nil {
-		resetLocked()
+	driver, err := normalizeDriver(cfg.Driver)
+	if err != nil {
 		return err
+	}
+	minLevel = parseLevel(cfg.Level)
+	outputDriver = driver
+
+	switch driver {
+	case DriverCLS:
+		if err := openCLSLocked(cfg.CLS); err != nil {
+			_ = resetLocked()
+			return err
+		}
+	default:
+		filePath := strings.TrimSpace(cfg.FilePath)
+		if filePath == "" {
+			filePath = defaultFilePath
+		}
+		basePath = filePath
+		if err := openDailyFileLocked(nowFunc()); err != nil {
+			_ = resetLocked()
+			return err
+		}
 	}
 	enabled = true
 	return nil
@@ -137,7 +153,7 @@ func (l *Logger) Error(msg string, attrs ...any) {
 	write(slog.LevelError, msg, mergeAttrs(l, attrs)...)
 }
 
-// Close 关闭日志文件句柄。
+// Close 关闭当前驱动。file 关闭文件句柄；cls 刷出内存批次后关闭 producer。
 func Close() error {
 	mu.Lock()
 	defer mu.Unlock()
@@ -174,8 +190,10 @@ func write(level slog.Level, msg string, attrs ...any) {
 	if !enabled {
 		return
 	}
-	if err := ensureDailyFileLocked(nowFunc()); err != nil {
-		return
+	if outputDriver == DriverFile {
+		if err := ensureDailyFileLocked(nowFunc()); err != nil {
+			return
+		}
 	}
 	if logger == nil {
 		return
@@ -232,20 +250,26 @@ func openDailyFileLocked(now time.Time) error {
 
 func resetLocked() error {
 	enabled = false
+	outputDriver = ""
 	logger = nil
 	minLevel = slog.LevelInfo
 	basePath = ""
 	currentDay = ""
 
-	if logFile == nil {
-		return nil
-	}
-
 	var err error
-	if closeErr := logFile.Close(); closeErr != nil {
-		err = closeErr
+	if logFile != nil {
+		if closeErr := logFile.Close(); closeErr != nil {
+			err = closeErr
+		}
+		logFile = nil
 	}
-	logFile = nil
+	if clsClient != nil {
+		client := clsClient
+		clsClient = nil
+		if closeErr := client.Close(clsCloseTimeoutMs); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}
 	return err
 }
 
